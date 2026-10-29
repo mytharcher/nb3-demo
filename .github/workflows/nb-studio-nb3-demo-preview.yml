@@ -85,13 +85,57 @@ jobs:
         if: steps.credential.outputs.available == 'true'
         run: nb-studio build status --app "$APP_ID" --state building --logs "$LOGS"
 
-      - name: Install dependencies
+      - name: Authenticate registry, install dependencies and build archive
         if: steps.credential.outputs.available == 'true'
-        run: pnpm install --frozen-lockfile
+        env:
+          NOCOBASE_NPM_PASSWORD: ${{ secrets.NOCOBASE_NPM_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync, unlinkSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { spawnSync } from 'node:child_process';
 
-      - name: Build deployment archive
-        if: steps.credential.outputs.available == 'true'
-        run: pnpm build --target linux-x64 --tar
+          if (!process.env.NOCOBASE_NPM_PASSWORD) {
+            throw new Error('NOCOBASE_NPM_PASSWORD is required to install the locked NocoBase packages.');
+          }
+          // The registry's npm legacy login protocol, also used by pnpm login.
+          const response = await fetch('https://pkg-v3.nocobase.com/-/user/org.couchdb.user:nocobase', {
+            method: 'PUT',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: 'nocobase', password: process.env.NOCOBASE_NPM_PASSWORD }),
+          });
+          if (!response.ok) throw new Error(`Private registry login failed: HTTP ${response.status}`);
+          const { token } = await response.json();
+          if (typeof token !== 'string' || !token) throw new Error('Private registry login returned no token.');
+          const mask = token.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+          console.log(`::add-mask::${mask}`);
+
+          // Only placeholders reach the temporary file; credentials stay in child-process env.
+          const config = join(process.env.RUNNER_TEMP, 'nocobase-registry.npmrc');
+          writeFileSync(config, [
+            '@nocobase:registry=https://pkg-v3.nocobase.com/',
+            '//pkg-v3.nocobase.com/:_authToken=${NOCOBASE_NPM_TOKEN}',
+            '',
+          ].join('\n'), { mode: 0o600 });
+          const env = { ...process.env, NPM_CONFIG_USERCONFIG: config, NOCOBASE_NPM_TOKEN: token };
+          delete env.NOCOBASE_NPM_PASSWORD;
+          try {
+            for (const args of [
+              ['install', '--frozen-lockfile'],
+              ['build', '--target', 'linux-x64', '--tar'],
+            ]) {
+              console.log(`Running pnpm ${args.join(' ')}`);
+              const result = spawnSync('pnpm', args, { env, stdio: 'inherit' });
+              if (result.error) throw result.error;
+              if (result.status !== 0) {
+                process.exitCode = result.status ?? 1;
+                break;
+              }
+            }
+          } finally {
+            unlinkSync(config);
+          }
+          NODE
 
       # Studio infers the repository and PR head SHA from GitHub Actions.
       # The first PR deployment binds the app to its source; Studio deletes it on close/merge.
