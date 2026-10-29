@@ -96,7 +96,7 @@ jobs:
           import { spawnSync } from 'node:child_process';
 
           console.log('Controlled slow build for cancellation verification.');
-          await new Promise(resolve => setTimeout(resolve, 120000));
+          await new Promise(resolve => setTimeout(resolve, 150000));
 
           if (!process.env.NOCOBASE_NPM_PASSWORD) {
             throw new Error('NOCOBASE_NPM_PASSWORD is required to install the locked NocoBase packages.');
