@@ -1,0 +1,8 @@
+.auth-brand-panel {
+  background: var(--auth-brand-background);
+  background-image: radial-gradient(
+    ellipse at top right,
+    color-mix(in srgb, var(--auth-brand-highlight) 8%, transparent),
+    transparent 65%
+  );
+}
